@@ -1,0 +1,38 @@
+name: Build NetHunter Kernel OnePlus 6
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip
+
+    - name: Build the Kernel
+      run: |
+        export TERM=xterm
+        ROOT_DIR=$(pwd)
+        BUILD_SCRIPT=$(find "$ROOT_DIR" -name "build.sh" | head -n 1)
+        
+        BUILD_DIR=$(dirname "$BUILD_SCRIPT")
+        cd "$BUILD_DIR"
+        
+        chmod +x build.sh
+        # Magisk Boot နှင့် အလိုအလျောက် ပေါင်းပေးမည့် AnyKernel Zip (TWRP ဖိုင်) ထွက်လာစေရန် "T" ကို အလိုအလျောက် ရွေးပေးမည်
+        echo "T" | ./build.sh
+
+    - name: Upload Kernel Zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: NetHunter-Kernel-OP6-Build
+        path: "**/*.zip" 
