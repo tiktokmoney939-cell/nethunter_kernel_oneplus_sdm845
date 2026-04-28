@@ -1,0 +1,81 @@
+name: Build V0lk3n NetHunter Kernel + AnyKernel3 (ADB Sideload Ready)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout V0lk3n Kernel Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: nethunter-lineage-22.2
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev make clang lld git curl wget python3 cpio libelf-dev device-tree-compiler
+
+      - name: Build Kernel using V0lk3n Script
+        run: |
+          cd kali-nethunter-kernel-builder
+          cp ../nh_files/local.config .
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Download AnyKernel3 Template
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cp AnyKernel3/* . -r --no-clobber
+
+      - name: Prepare AnyKernel3 Zip (ADB Sideload Version)
+        run: |
+          # V0lk3n build ကနေ Image.gz-dtb ကို ရှာပြီး ထည့်ပါ
+          find . -name "Image.gz-dtb" -exec cp {} ./ \;
+          
+          # anykernel.sh ကို OnePlus 6/6T အတွက် ပြင်ဆင်ပါ
+          cat > anykernel.sh << 'EOF'
+#!/bin/sh
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+
+## AnyKernel setup
+properties() {
+  kernel.string=V0lk3n NetHunter Kernel for OnePlus 6/6T (LineageOS 22.2)
+  do.devicecheck=1
+  do.modules=0
+  do.systemless=1
+  do.cleanup=1
+  do.cleanuponabort=0
+  device.name1=enchilada
+  device.name2=fajita
+  device.name3=OnePlus6
+  device.name4=OnePlus6T
+  supported.versions=
+  supported.patchlevels=
+}
+
+block=boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+. tools/ak3-core.sh;
+
+## AnyKernel install
+dump_boot;
+write_boot;
+## end install
+EOF
+
+          # Zip ဖြစ်အောင် ထုပ်ပါ
+          zip -r9 "V0lk3n-NetHunter-A15-AnyKernel.zip" * -x "*.git*" "README.md" "*.yml" "AnyKernel3/*"
+
+      - name: Upload AnyKernel Zip (ADB Sideload Ready)
+        uses: actions/upload-artifact@v4
+        with:
+          name: V0lk3n-NetHunter-LineageOS22-AnyKernel
+          path: V0lk3n-NetHunter-A15-AnyKernel.zip
+          retention-days: 30
