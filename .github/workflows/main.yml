@@ -22,14 +22,22 @@ jobs:
       run: |
         export TERM=xterm
         ROOT_DIR=$(pwd)
-        BUILD_SCRIPT=$(find "$ROOT_DIR" -name "build.sh" | head -n 1)
         
+        BUILD_SCRIPT=$(find . -name "build.sh" | head -n 1)
+        CONFIG_FILE=$(find . -name "local.config" | head -n 1)
         BUILD_DIR=$(dirname "$BUILD_SCRIPT")
-        cd "$BUILD_DIR"
         
+        # အစ်ကို ထောက်ပြထားသော local.config ကူးထည့်သည့် အဆင့် (Menu ထပ်မပေါ်စေရန်)
+        if [ -n "$CONFIG_FILE" ]; then
+          cp "$CONFIG_FILE" "$BUILD_DIR/"
+          echo "Config file copied successfully."
+        fi
+        
+        cd "$BUILD_DIR"
         chmod +x build.sh
-        # Magisk Boot နှင့် အလိုအလျောက် ပေါင်းပေးမည့် AnyKernel Zip (TWRP ဖိုင်) ထွက်လာစေရန် "T" ကို အလိုအလျောက် ရွေးပေးမည်
-        echo "T" | ./build.sh
+        
+        # 'T' ကိုရွေးမည်၊ နောက်ထပ် မေးလာပါက 'n' (No) ဟု အလိုအလျောက် ဖြေပေးမည်
+        printf "T\nn\n" | ./build.sh
 
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
