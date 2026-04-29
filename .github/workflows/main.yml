@@ -1,68 +1,358 @@
-name: Build NetHunter Kernel OnePlus 6
+name: Build NetHunter Kernel (Smart Detection)
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-22.04
-
+    
     steps:
-    - name: Checkout Source Code
+    - name: Checkout kernel source
       uses: actions/checkout@v4
       with:
         submodules: recursive
-
-    - name: Install Dependencies
+    
+    - name: Setup build environment
       run: |
         sudo apt-get update
-        # expect စနစ်ကို အသစ်ထည့်သွင်းထားပါသည်
-        sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip ccache expect
+        sudo apt-get install -y \
+          bc bison build-essential ccache curl flex \
+          g++-multilib gcc-multilib git gnupg gperf \
+          imagemagick lib32ncurses5-dev lib32readline-dev \
+          lib32z1-dev liblz4-tool libncurses5 libncurses5-dev \
+          libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
+          lzop pngcrush rsync schedtool squashfs-tools \
+          xsltproc zip zlib1g-dev python3 python-is-python3 \
+          wget unzip
 
-    - name: Build the Kernel
+    - name: Download toolchains
       run: |
-        export TERM=xterm
-        ROOT_DIR=$(pwd)
+        mkdir -p ~/toolchain && cd ~/toolchain
         
-        BUILD_SCRIPT=$(find . -name "build.sh" | head -n 1)
-        CONFIG_FILE=$(find . -name "local.config" | head -n 1)
-        BUILD_DIR=$(dirname "$BUILD_SCRIPT")
+        # Clang
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r487747c.tar.gz
+        mkdir clang && tar -xzf clang-r487747c.tar.gz -C clang
         
-        if [ -n "$CONFIG_FILE" ]; then
-          cp "$CONFIG_FILE" "$BUILD_DIR/"
+        # GCC ARM64
+        git clone -q --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-arm64
+        
+        # GCC ARM
+        git clone -q --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-arm
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ github.workflow }}-${{ github.job }}
+        max-size: 2G
+
+    - name: Set environment
+      run: |
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "SUBARCH=arm64" >> $GITHUB_ENV
+        echo "PATH=$HOME/toolchain/clang/bin:$HOME/toolchain/gcc-arm64/bin:$HOME/toolchain/gcc-arm/bin:$PATH" >> $GITHUB_ENV
+        echo "KBUILD_BUILD_USER=NetHunter" >> $GITHUB_ENV
+        echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
+
+    - name: Detect device configuration
+      id: detect
+      run: |
+        echo "🔍 Detecting available defconfigs..."
+        
+        # List all available defconfigs
+        echo "Available defconfigs:"
+        ls arch/arm64/configs/ | grep -E "(enchilada|sdm845|lineage)" || true
+        
+        # Auto-detect the right defconfig
+        if [ -f arch/arm64/configs/lineage_enchilada_defconfig ]; then
+          DEFCONFIG="lineage_enchilada_defconfig"
+        elif [ -f arch/arm64/configs/enchilada_defconfig ]; then
+          DEFCONFIG="enchilada_defconfig"
+        elif [ -f arch/arm64/configs/nethunter_enchilada_defconfig ]; then
+          DEFCONFIG="nethunter_enchilada_defconfig"
+        elif [ -f arch/arm64/configs/sdm845_defconfig ]; then
+          DEFCONFIG="sdm845_defconfig"
+          echo "⚠️ Using generic SDM845 config - may need device-specific adjustments"
+        else
+          echo "❌ ERROR: No suitable defconfig found for OnePlus 6!"
+          echo "Available configs:"
+          ls arch/arm64/configs/
+          exit 1
         fi
         
-        cd "$BUILD_DIR"
-        chmod +x build.sh
+        echo "✅ Selected defconfig: $DEFCONFIG"
+        echo "defconfig=$DEFCONFIG" >> $GITHUB_OUTPUT
         
-        # Script ၏ မေးခွန်းများကို အဆင့်လိုက် အတိအကျ ဖြေပေးမည့် စနစ်
-        cat << 'EOF' > auto_build.exp
-        set timeout -1
-        spawn ./build.sh
-        
-        expect "Enter selection"
-        send "S\r"
-        
-        expect "Enter selection"
-        send "T\r"
-        
-        expect "Edit the kernel config?"
-        send "n\r"
-        
-        expect "to continue.."
-        send "\r"
-        
-        expect "Enter selection"
-        send "E\r"
-        
-        expect eof
-        EOF
-        
-        expect auto_build.exp
+        # Check kernel version from Makefile
+        KERNEL_VERSION=$(make kernelversion)
+        echo "Kernel version: $KERNEL_VERSION"
+        echo "kernel_version=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
-    - name: Upload Kernel Zip
+    - name: Verify kernel compatibility
+      run: |
+        VERSION="${{ steps.detect.outputs.kernel_version }}"
+        MAJOR=$(echo $VERSION | cut -d. -f1)
+        MINOR=$(echo $VERSION | cut -d. -f2)
+        
+        echo "📊 Kernel Compatibility Check:"
+        echo "- Kernel Version: $VERSION"
+        echo "- Major: $MAJOR, Minor: $MINOR"
+        
+        if [ "$MAJOR" -eq 4 ] && [ "$MINOR" -ge 9 ]; then
+          echo "✅ Compatible with Android 9-11 (LineageOS 16-18)"
+        elif [ "$MAJOR" -eq 4 ] && [ "$MINOR" -ge 14 ]; then
+          echo "✅ Compatible with Android 10-12 (LineageOS 17-19)"
+        elif [ "$MAJOR" -eq 5 ] && [ "$MINOR" -ge 4 ]; then
+          echo "✅ Compatible with Android 12-13 (LineageOS 19-20)"
+        elif [ "$MAJOR" -eq 5 ] && [ "$MINOR" -ge 10 ]; then
+          echo "✅ Compatible with Android 14-15 (LineageOS 21-22)"
+        else
+          echo "⚠️ Unknown compatibility - please verify manually"
+        fi
+
+    - name: Configure kernel
+      run: |
+        make clean && make mrproper
+        
+        # Load defconfig
+        make O=out ARCH=arm64 ${{ steps.detect.outputs.defconfig }}
+        
+        echo "🔧 Enabling NetHunter features..."
+        
+        # Core wireless
+        scripts/config --file out/.config \
+          -e CONFIG_WIRELESS_EXT \
+          -e CONFIG_CFG80211_WEXT \
+          -e CONFIG_WEXT_PRIV \
+          -e CONFIG_WEXT_CORE
+        
+        # USB networking
+        scripts/config --file out/.config \
+          -e CONFIG_USB_RTL8152 \
+          -e CONFIG_USB_RTL8153 \
+          -e CONFIG_USB_NET_AX8817X \
+          -e CONFIG_USB_NET_AX88179_178A \
+          -e CONFIG_USB_USBNET \
+          -e CONFIG_USB_NET_CDCETHER \
+          -e CONFIG_USB_NET_CDC_NCM
+        
+        # HID support
+        scripts/config --file out/.config \
+          -e CONFIG_INPUT_UINPUT \
+          -e CONFIG_HID_LOGITECH_DJ
+        
+        # USB Gadget (HID keyboard attack)
+        scripts/config --file out/.config \
+          -e CONFIG_USB_CONFIGFS \
+          -e CONFIG_USB_CONFIGFS_F_HID || true
+        
+        # Netfilter
+        scripts/config --file out/.config \
+          -e CONFIG_NETFILTER \
+          -e CONFIG_NETFILTER_ADVANCED \
+          -e CONFIG_NETFILTER_XT_TARGET_MARK || true
+        
+        echo "✅ Configuration complete"
+
+    - name: Build kernel
+      run: |
+        echo "🔨 Building kernel..."
+        
+        make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-android- \
+          CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        
+        # Verify output
+        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ] && [ ! -f out/arch/arm64/boot/Image-dtb ] && [ ! -f out/arch/arm64/boot/Image ]; then
+          echo "❌ ERROR: Kernel image not found!"
+          echo "Expected files:"
+          echo "  - Image.gz-dtb (preferred)"
+          echo "  - Image-dtb"
+          echo "  - Image"
+          ls -la out/arch/arm64/boot/ || true
+          exit 1
+        fi
+        
+        echo "✅ Kernel built successfully"
+
+    - name: Prepare AnyKernel3
+      run: |
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ~/AnyKernel3
+        cd ~/AnyKernel3
+        rm -rf .git* modules patch ramdisk LICENSE README.md
+
+    - name: Configure AnyKernel3
+      run: |
+        cd ~/AnyKernel3
+        
+        # Get kernel info
+        KERNEL_VERSION="${{ steps.detect.outputs.kernel_version }}"
+        
+        cat > anykernel.sh << 'EOF'
+# AnyKernel3 Configuration
+properties() { '
+kernel.string=NetHunter Kernel for OnePlus 6 (SDM845)
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=enchilada
+device.name2=OnePlus6
+device.name3=OnePlus 6
+device.name4=sdm845
+supported.versions=9 - 15
+supported.patchlevels=
+'; }
+
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=1;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+. tools/ak3-core.sh;
+
+## Kernel installation
+dump_boot;
+
+# Verify device
+if [ -f /system/build.prop ]; then
+  DEVICE=$(getprop ro.product.device)
+  ui_print "Device detected: $DEVICE"
+fi
+
+write_boot;
+## end install
+EOF
+
+    - name: Package kernel
+      id: package
+      run: |
+        cd ~/AnyKernel3
+        
+        # Copy kernel image (try multiple possible names)
+        if [ -f $GITHUB_WORKSPACE/out/arch/arm64/boot/Image.gz-dtb ]; then
+          cp $GITHUB_WORKSPACE/out/arch/arm64/boot/Image.gz-dtb ~/AnyKernel3/
+          echo "Using Image.gz-dtb"
+        elif [ -f $GITHUB_WORKSPACE/out/arch/arm64/boot/Image-dtb ]; then
+          cp $GITHUB_WORKSPACE/out/arch/arm64/boot/Image-dtb ~/AnyKernel3/Image.gz-dtb
+          echo "Using Image-dtb (renamed to Image.gz-dtb)"
+        elif [ -f $GITHUB_WORKSPACE/out/arch/arm64/boot/Image ]; then
+          gzip -c $GITHUB_WORKSPACE/out/arch/arm64/boot/Image > ~/AnyKernel3/Image.gz-dtb
+          echo "Using Image (compressed to Image.gz-dtb)"
+        fi
+        
+        # Copy dtbo if exists
+        if [ -f $GITHUB_WORKSPACE/out/arch/arm64/boot/dtbo.img ]; then
+          cp $GITHUB_WORKSPACE/out/arch/arm64/boot/dtbo.img ~/AnyKernel3/
+          echo "DTBO included"
+        fi
+        
+        # Create zip
+        KERNEL_VERSION="${{ steps.detect.outputs.kernel_version }}"
+        DATE=$(date +%Y%m%d-%H%M)
+        ZIP_NAME="NetHunter-Kernel-OnePlus6-${KERNEL_VERSION}-${DATE}.zip"
+        
+        zip -r9 $ZIP_NAME * -x .git README.md *placeholder
+        mv $ZIP_NAME $GITHUB_WORKSPACE/
+        
+        echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+        echo "✅ Package created: $ZIP_NAME"
+
+    - name: Generate build info
+      run: |
+        cat > $GITHUB_WORKSPACE/BUILD-INFO.txt << EOF
+NetHunter Kernel Build Information
+====================================
+
+Device: OnePlus 6 (enchilada)
+Kernel Version: ${{ steps.detect.outputs.kernel_version }}
+Defconfig: ${{ steps.detect.outputs.defconfig }}
+Build Date: $(date)
+Commit: ${{ github.sha }}
+
+Features:
+- Wireless extensions enabled
+- USB networking support
+- NetHunter optimizations
+- HID gadget support
+
+Installation:
+1. Boot to TWRP recovery
+2. Flash ${{ steps.package.outputs.zip_name }}
+3. Reboot system
+
+Compatible ROMs:
+- LineageOS (check kernel version compatibility)
+- Custom Android ROMs based on AOSP
+
+IMPORTANT: Make sure to backup your current boot partition before flashing!
+EOF
+        
+        cat $GITHUB_WORKSPACE/BUILD-INFO.txt
+
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: NetHunter-Kernel-OP6-Build
-        path: "**/*.zip" 
-        
+        name: nethunter-kernel-${{ github.run_number }}
+        path: |
+          ${{ steps.package.outputs.zip_name }}
+          BUILD-INFO.txt
+        retention-days: 30
+
+    - name: Create release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: NetHunter Kernel v${{ github.run_number }}
+        body: |
+          ## NetHunter Kernel for OnePlus 6
+          
+          **Kernel Version:** ${{ steps.detect.outputs.kernel_version }}  
+          **Defconfig:** ${{ steps.detect.outputs.defconfig }}  
+          **Build Date:** $(date)
+          
+          ### Features
+          - ✅ Wireless extensions
+          - ✅ USB networking (RTL8152/8153, AX88179)
+          - ✅ NetHunter optimizations
+          - ✅ HID gadget support
+          
+          ### Installation
+          1. Backup your current boot partition in TWRP
+          2. Download the kernel zip
+          3. Flash in TWRP recovery
+          4. Reboot
+          
+          ### Compatibility
+          Check BUILD-INFO.txt for compatible ROM versions
+          
+          **⚠️ Warning:** Always backup before flashing!
+        files: |
+          ${{ steps.package.outputs.zip_name }}
+          BUILD-INFO.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Summary
+      run: |
+        echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Device:** OnePlus 6 (enchilada)" >> $GITHUB_STEP_SUMMARY
+        echo "**Kernel:** ${{ steps.detect.outputs.kernel_version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Defconfig:** ${{ steps.detect.outputs.defconfig }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Package:** ${{ steps.package.outputs.zip_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Download" >> $GITHUB_STEP_SUMMARY
+        echo "Check the Artifacts section above to download" >> $GITHUB_STEP_SUMMARY
