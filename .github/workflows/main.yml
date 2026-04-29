@@ -16,7 +16,8 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip ccache
+        # expect စနစ်ကို အသစ်ထည့်သွင်းထားပါသည်
+        sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip ccache expect
 
     - name: Build the Kernel
       run: |
@@ -34,14 +35,34 @@ jobs:
         cd "$BUILD_DIR"
         chmod +x build.sh
         
-        # ၁။ Toolchain ကို အရင်ဆုံး ဒေါင်းလုဒ်ဆွဲရန် 'S' ကို အလိုအလျောက် ရွေးပေးမည်
-        echo "S" | ./build.sh
+        # Script ၏ မေးခွန်းများကို အဆင့်လိုက် အတိအကျ ဖြေပေးမည့် စနစ်
+        cat << 'EOF' > auto_build.exp
+        set timeout -1
+        spawn ./build.sh
         
-        # ၂။ Toolchain ရပြီဆိုမှ Kernel ကို 'T' ဖြင့် ဆက်လက် Build မည်
-        printf "T\nn\n" | ./build.sh
+        expect "Enter selection"
+        send "S\r"
+        
+        expect "Enter selection"
+        send "T\r"
+        
+        expect "Edit the kernel config?"
+        send "n\r"
+        
+        expect "to continue.."
+        send "\r"
+        
+        expect "Enter selection"
+        send "E\r"
+        
+        expect eof
+        EOF
+        
+        expect auto_build.exp
 
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
         name: NetHunter-Kernel-OP6-Build
         path: "**/*.zip" 
+        
