@@ -16,7 +16,6 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        # ccache ကိုပါ အလိုအလျောက် သွင်းပေးမည့်စာကြောင်း
         sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip ccache
 
     - name: Build the Kernel
@@ -35,6 +34,10 @@ jobs:
         cd "$BUILD_DIR"
         chmod +x build.sh
         
+        # ၁။ Toolchain ကို အရင်ဆုံး ဒေါင်းလုဒ်ဆွဲရန် 'S' ကို အလိုအလျောက် ရွေးပေးမည်
+        echo "S" | ./build.sh
+        
+        # ၂။ Toolchain ရပြီဆိုမှ Kernel ကို 'T' ဖြင့် ဆက်လက် Build မည်
         printf "T\nn\n" | ./build.sh
 
     - name: Upload Kernel Zip
@@ -42,4 +45,3 @@ jobs:
       with:
         name: NetHunter-Kernel-OP6-Build
         path: "**/*.zip" 
-        
