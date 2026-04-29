@@ -16,7 +16,8 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip
+        # ccache ကိုပါ အလိုအလျောက် သွင်းပေးမည့်စာကြောင်း
+        sudo apt-get install -y git bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-arm64 zip unzip ccache
 
     - name: Build the Kernel
       run: |
@@ -27,16 +28,13 @@ jobs:
         CONFIG_FILE=$(find . -name "local.config" | head -n 1)
         BUILD_DIR=$(dirname "$BUILD_SCRIPT")
         
-        # အစ်ကို ထောက်ပြထားသော local.config ကူးထည့်သည့် အဆင့် (Menu ထပ်မပေါ်စေရန်)
         if [ -n "$CONFIG_FILE" ]; then
           cp "$CONFIG_FILE" "$BUILD_DIR/"
-          echo "Config file copied successfully."
         fi
         
         cd "$BUILD_DIR"
         chmod +x build.sh
         
-        # 'T' ကိုရွေးမည်၊ နောက်ထပ် မေးလာပါက 'n' (No) ဟု အလိုအလျောက် ဖြေပေးမည်
         printf "T\nn\n" | ./build.sh
 
     - name: Upload Kernel Zip
@@ -44,3 +42,4 @@ jobs:
       with:
         name: NetHunter-Kernel-OP6-Build
         path: "**/*.zip" 
+        
